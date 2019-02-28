@@ -30,9 +30,9 @@ Please read the original [pytorch bert documentation](https://github.com/hugging
                 ``` 
   to 
                 ```
-                if token in self.vocab.keys():
-                    ids.append(self.vocab[token])
-                else:
+                if token in self.vocab.keys():\
+                    ids.append(self.vocab[token])\
+                else:\
                     ids.append(self.vocab['[UNK]'])
                 ```
   and save it.
