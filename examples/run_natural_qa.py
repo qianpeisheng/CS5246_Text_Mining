@@ -104,7 +104,7 @@ class InputFeatures(object):
                  segment_ids,
                  start_position=None,
                  end_position=None,
-                 is_impossible=None):
+                ):
         self.unique_id = unique_id
         self.example_index = example_index
         self.doc_span_index = doc_span_index
@@ -116,7 +116,6 @@ class InputFeatures(object):
         self.segment_ids = segment_ids
         self.start_position = start_position
         self.end_position = end_position
-        self.is_impossible = is_impossible
 
 
 def read_squad_examples(input_file, is_training):
@@ -125,13 +124,15 @@ def read_squad_examples(input_file, is_training):
     with open(input_file, "r", encoding='utf-8') as reader:
         input_data = json_lines.reader(reader)
 
-    def is_whitespace(c):
-        if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
-            return True
-        return False
+    # def is_whitespace(c):
+    #     if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
+    #         return True
+    #     return False
 
     examples = []
     for entry in input_data:
+        # only long answer
+
             # def __init__(self,
             #      question_tokens,
             #      doc_tokens,
@@ -142,69 +143,20 @@ def read_squad_examples(input_file, is_training):
         doc_tokens = entry['document_tokens']
         start_token = entry['annotations'][0]['long_answer']['start_token']
         end_token = entry['annotations'][0]['long_answer']['end_token']
-        start_byte = entry['annotations'][0]['long_answer']['start_byte']
-        orig_answer_text = entry['document_html'][]
-        for paragraph in entry["paragraphs"]:
-            paragraph_text = paragraph["context"]
-            doc_tokens = []
-            char_to_word_offset = []
-            prev_is_whitespace = True
-            for c in paragraph_text:
-                if is_whitespace(c):
-                    prev_is_whitespace = True
-                else:
-                    if prev_is_whitespace:
-                        doc_tokens.append(c)
-                    else:
-                        doc_tokens[-1] += c
-                    prev_is_whitespace = False
-                char_to_word_offset.append(len(doc_tokens) - 1)
+        # bytes and html are messy and will be avoid for now
+        #start_byte = entry['annotations'][0]['long_answer']['start_byte']
+        #end_byte = entry['annotations'][0]['long_answer']['end_byte']
+        orig_answer_text = ''
+        for id in range(start_token, end_token+1):
+            orig_answer_text += entry['document_tokens'][id]['token']
+            orig_answer_text += ' '
 
-            for qa in paragraph["qas"]:
-                qas_id = qa["id"]
-                question_text = qa["question"]
-                start_position = None
-                end_position = None
-                orig_answer_text = None
-                is_impossible = False
-                if is_training:
-                    if (len(qa["answers"]) != 1) and (not is_impossible):
-                        raise ValueError(
-                            "For training, each question should have exactly 1 answer.")
-                    if not is_impossible:
-                        answer = qa["answers"][0]
-                        orig_answer_text = answer["text"]
-                        answer_offset = answer["answer_start"]
-                        answer_length = len(orig_answer_text)
-                        start_position = char_to_word_offset[answer_offset]
-                        end_position = char_to_word_offset[answer_offset + answer_length - 1]
-                        # Only add answers where the text can be exactly recovered from the
-                        # document. If this CAN'T happen it's likely due to weird Unicode
-                        # stuff so we will just skip the example.
-                        #
-                        # Note that this means for training mode, every example is NOT
-                        # guaranteed to be preserved.
-                        actual_text = " ".join(doc_tokens[start_position:(end_position + 1)])
-                        cleaned_answer_text = " ".join(
-                            whitespace_tokenize(orig_answer_text))
-                        if actual_text.find(cleaned_answer_text) == -1:
-                            logger.warning("Could not find answer: '%s' vs. '%s'",
-                                           actual_text, cleaned_answer_text)
-                            continue
-                    else:
-                        start_position = -1
-                        end_position = -1
-                        orig_answer_text = ""
-
-                example = NQExample
-            (
-                    question_text=question_text,
-                    doc_tokens=doc_tokens,
-                    orig_answer_text=orig_answer_text,
-                    start_position=start_position,
-                    end_position=end_position,
-                    is_impossible=is_impossible)
-                examples.append(example)
+        example = NQExample(question_tokens=question_tokens,
+                            doc_tokens=doc_tokens,
+                            orig_answer_text=orig_answer_text,
+                            start_token=start_token,
+                            end_token=end_token)
+        examples.append(example)
     return examples
 
 
@@ -216,7 +168,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
     features = []
     for (example_index, example) in enumerate(examples):
-        query_tokens = tokenizer.tokenize(example.question_text)
+        query_tokens = example.question_tokens
+        # question token are normal tokens
+        # doc tokens are:
+        # form {'end_byte': 95, 'html_token': False, 'start_byte': 92, 'token': 'The'}
 
         if len(query_tokens) > max_query_length:
             query_tokens = query_tokens[0:max_query_length]
@@ -226,25 +181,25 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         all_doc_tokens = []
         for (i, token) in enumerate(example.doc_tokens):
             orig_to_tok_index.append(len(all_doc_tokens))
-            sub_tokens = tokenizer.tokenize(token)
+            sub_tokens = tokenizer.tokenize(token['token']) # see the form above
             for sub_token in sub_tokens:
                 tok_to_orig_index.append(i)
                 all_doc_tokens.append(sub_token)
 
         tok_start_position = None
         tok_end_position = None
-        if is_training and example.is_impossible:
-            tok_start_position = -1
-            tok_end_position = -1
-        if is_training and not example.is_impossible:
-            tok_start_position = orig_to_tok_index[example.start_position]
-            if example.end_position < len(example.doc_tokens) - 1:
-                tok_end_position = orig_to_tok_index[example.end_position + 1] - 1
+        if is_training:
+            tok_start_position = orig_to_tok_index[example.start_token]
+            if example.end_token < len(example.doc_tokens) - 1:
+                tok_end_position = orig_to_tok_index[example.end_token + 1] - 1
             else:
                 tok_end_position = len(all_doc_tokens) - 1
-            (tok_start_position, tok_end_position) = _improve_answer_span(
-                all_doc_tokens, tok_start_position, tok_end_position, tokenizer,
-                example.orig_answer_text)
+            
+            # to be examined later:
+
+            # (tok_start_position, tok_end_position) = _improve_answer_span(
+            #     all_doc_tokens, tok_start_position, tok_end_position, tokenizer,
+            #     example.orig_answer_text)
 
         # The -3 accounts for [CLS], [SEP] and [SEP]
         max_tokens_for_doc = max_seq_length - len(query_tokens) - 3
@@ -308,7 +263,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
             start_position = None
             end_position = None
-            if is_training and not example.is_impossible:
+            if is_training:
                 # For training, if our document chunk does not contain an annotation
                 # we throw it out, since there is nothing to predict.
                 doc_start = doc_span.start
@@ -324,9 +279,6 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     doc_offset = len(query_tokens) + 2
                     start_position = tok_start_position - doc_start + doc_offset
                     end_position = tok_end_position - doc_start + doc_offset
-            if is_training and example.is_impossible:
-                start_position = 0
-                end_position = 0
             if example_index < 20:
                 logger.info("*** Example ***")
                 logger.info("unique_id: %s" % (unique_id))
@@ -343,9 +295,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     "input_mask: %s" % " ".join([str(x) for x in input_mask]))
                 logger.info(
                     "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
-                if is_training and example.is_impossible:
-                    logger.info("impossible example")
-                if is_training and not example.is_impossible:
+                if is_training:
                     answer_text = " ".join(tokens[start_position:(end_position + 1)])
                     logger.info("start_position: %d" % (start_position))
                     logger.info("end_position: %d" % (end_position))
@@ -365,47 +315,47 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     segment_ids=segment_ids,
                     start_position=start_position,
                     end_position=end_position,
-                    is_impossible=example.is_impossible))
+                    ))
             unique_id += 1
 
     return features
 
 
-def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer,
-                         orig_answer_text):
-    """Returns tokenized answer spans that better match the annotated answer."""
+# def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer,
+#                          orig_answer_text):
+#     """Returns tokenized answer spans that better match the annotated answer."""
 
-    # The SQuAD annotations are character based. We first project them to
-    # whitespace-tokenized words. But then after WordPiece tokenization, we can
-    # often find a "better match". For example:
-    #
-    #   Question: What year was John Smith born?
-    #   Context: The leader was John Smith (1895-1943).
-    #   Answer: 1895
-    #
-    # The original whitespace-tokenized answer will be "(1895-1943).". However
-    # after tokenization, our tokens will be "( 1895 - 1943 ) .". So we can match
-    # the exact answer, 1895.
-    #
-    # However, this is not always possible. Consider the following:
-    #
-    #   Question: What country is the top exporter of electornics?
-    #   Context: The Japanese electronics industry is the lagest in the world.
-    #   Answer: Japan
-    #
-    # In this case, the annotator chose "Japan" as a character sub-span of
-    # the word "Japanese". Since our WordPiece tokenizer does not split
-    # "Japanese", we just use "Japanese" as the annotation. This is fairly rare
-    # in SQuAD, but does happen.
-    tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
+#     # The SQuAD annotations are character based. We first project them to
+#     # whitespace-tokenized words. But then after WordPiece tokenization, we can
+#     # often find a "better match". For example:
+#     #
+#     #   Question: What year was John Smith born?
+#     #   Context: The leader was John Smith (1895-1943).
+#     #   Answer: 1895
+#     #
+#     # The original whitespace-tokenized answer will be "(1895-1943).". However
+#     # after tokenization, our tokens will be "( 1895 - 1943 ) .". So we can match
+#     # the exact answer, 1895.
+#     #
+#     # However, this is not always possible. Consider the following:
+#     #
+#     #   Question: What country is the top exporter of electornics?
+#     #   Context: The Japanese electronics industry is the lagest in the world.
+#     #   Answer: Japan
+#     #
+#     # In this case, the annotator chose "Japan" as a character sub-span of
+#     # the word "Japanese". Since our WordPiece tokenizer does not split
+#     # "Japanese", we just use "Japanese" as the annotation. This is fairly rare
+#     # in SQuAD, but does happen.
+#     tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
 
-    for new_start in range(input_start, input_end + 1):
-        for new_end in range(input_end, new_start - 1, -1):
-            text_span = " ".join(doc_tokens[new_start:(new_end + 1)])
-            if text_span == tok_answer_text:
-                return (new_start, new_end)
+#     for new_start in range(input_start, input_end + 1):
+#         for new_end in range(input_end, new_start - 1, -1):
+#             text_span = " ".join(doc_tokens[new_start:(new_end + 1)])
+#             if text_span == tok_answer_text:
+#                 return (new_start, new_end)
 
-    return (input_start, input_end)
+#     return (input_start, input_end)
 
 
 def _check_is_max_context(doc_spans, cur_span_index, position):
