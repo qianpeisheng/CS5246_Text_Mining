@@ -121,8 +121,17 @@ class InputFeatures(object):
 def read_squad_examples(input_file, is_training):
     """Read a NQ json line file into a list of NQExample
 ."""
+    input_data = []
     with open(input_file, "r", encoding='utf-8') as reader:
-        input_data = json_lines.reader(reader)
+        raw_input_data = json_lines.reader(reader)
+        count = 0
+        for raw_input in raw_input_data:
+            count += 1
+            if count > 5:
+                break
+            raw_input['document_html'] = '' # this field is very big
+            input_data.append(raw_input)
+
 
     # def is_whitespace(c):
     #     if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
@@ -801,7 +810,6 @@ def main():
         os.makedirs(args.output_dir)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-
     train_examples = None
     num_train_optimization_steps = None
     if args.do_train:
