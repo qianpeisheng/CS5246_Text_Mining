@@ -25,16 +25,16 @@ Please read the original [pytorch bert documentation](https://github.com/hugging
 - The current `run_natural_qa.py` can run into *token outside vocabulary* problem. A temporal solution is to modify the source code of `pytorch_pretrained_bert`. 
   - Open `/home/peisheng/.local/lib/python3.6/site-packages/pytorch_pretrained_bert/tokenization.py` (your path)
   - Change line 102 from
-                '''
+                ```
                 ids.append(self.vocab[token])
-                ''' 
+                ``` 
   to 
-                '''
+                ```
                 if token in self.vocab.keys():
                     ids.append(self.vocab[token])
                 else:
                     ids.append(self.vocab['[UNK]'])
-                '''
+                ```
   and save it.
 
   - Please help debug this, prefrably by editing `run_natural_qa.py`, because `run_squad.py` works fine.
