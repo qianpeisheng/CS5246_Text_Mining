@@ -59,7 +59,17 @@ class NQExample(object):
     For examples without an answer, the start and end position are -1.
 
     Modified from SquadExample
-    NQ: no qas_id
+    NQ: no qas_id;
+    For now, only load short answers;
+    Use only tokens instead of chars
+    the end token is not in the final answer, but for the convenience of list indexing
+    
+    Also to limit the difficulty of this project
+    i.e. list[a,b] is right exclusive
+
+    (c,s,e,t)
+    t is question type
+    0 = short; 1 = long; 2 = yes; 3 = no; 4 = no-answer
     """
 
     def __init__(self,
@@ -67,12 +77,14 @@ class NQExample(object):
                  doc_tokens,
                  orig_answer_text=None,
                  start_token=None,
-                 end_token=None,):
+                 end_token=None,
+                 question_type = 0):
         self.question_tokens = question_tokens
         self.doc_tokens = doc_tokens
         self.orig_answer_text = orig_answer_text
         self.start_token = start_token
         self.end_token = end_token
+        self.question_type = question_type
 
     def __str__(self):
         return self.__repr__()
@@ -80,12 +92,12 @@ class NQExample(object):
     def __repr__(self):
         s = ""
         s += ", question_text: %s" % (
-            self.question_text)
+            self.question_tokens)
         s += ", doc_tokens: [%s]" % (" ".join(self.doc_tokens))
-        if self.start_position:
-            s += ", start_token: %d" % (self.start_position)
-        if self.start_position:
-            s += ", token: %d" % (self.end_position)
+        if self.start_token:
+            s += ", start_token: %d" % (self.start_token)
+        if self.start_token:# should this be end token ?
+            s += ", token: %d" % (self.end_token)
         return s
 
 
@@ -102,8 +114,8 @@ class InputFeatures(object):
                  input_ids,
                  input_mask,
                  segment_ids,
-                 start_position=None,
-                 end_position=None,
+                 start_token=None,
+                 end_token=None,
                 ):
         self.unique_id = unique_id
         self.example_index = example_index
@@ -114,73 +126,82 @@ class InputFeatures(object):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
-        self.start_position = start_position
-        self.end_position = end_position
+        self.start_token = start_token
+        self.start_token = start_token
 
 
-def read_squad_examples(input_file, is_training):
-    """Read a NQ json line file into a list of NQExample
+def read_NQ_examples(input_file, is_training):
+    """Read a NQ json line file into a list of NQExamples
 ."""
-    input_data = []
-    with open(input_file, "r", encoding='utf-8') as reader:
-        raw_input_data = json_lines.reader(reader)
+    with open(input_file, "r", encoding='utf-8') as f:
+        examples = []
         count = 0
-        for raw_input in raw_input_data:
+        for item in json_lines.reader(f):
+
+            # load relevant fields
+            question_tokens = item['question_tokens']
+            orig_doc_tokens = item['document_tokens']
+            # question token are normal tokens
+            # doc tokens are:
+            # form {'end_byte': 95, 'html_token': False, 'start_byte': 92, 'token': 'The'}
+            # simplify doc_tokens
+            doc_tokens = []
+            for i in orig_doc_tokens:
+                doc_tokens.append(i['token'])
+
+            short_answers = item['annotations'][0]['short_answers']
+            
+            # decide question type
+            question_type = 4 # assume it is a no-answer question
+            if item['annotations'][0]['long_answer']['start_token'] != -1:
+                question_type = 1 # long answer
+            if len(short_answers) > 0:
+                question_type = 0 # short answer
+            if len(item['annotation'][0]['yes_no_answer']) == 3:
+                question_type = 2 # yes
+            if len(item['annotation'][0]['yes_no_answer']) == 2:
+                question_type = 3 # no
+            
+            # split short answers and build examples
+            if len(short_answers) > 0:
+                for short_answer in short_answers:
+                    start_token = short_answer['start_token']
+                    end_token = short_answer['end_token']
+                    orig_answer_text = ''
+                    for i in range(start_token, end_token):
+                        orig_answer_text += item['document_tokens'][i]['token']
+                        orig_answer_text += ' ' # Not correct if there is no space, e.g. 'Hi!'
+                        example = NQExample(question_tokens=question_tokens,
+                                doc_tokens=doc_tokens,
+                                orig_answer_text=orig_answer_text,
+                                start_token=start_token,
+                                end_token=end_token,
+                                question_type=question_type)
+                        examples.append(example)
+
+                # if there is not short answers, skip
+
             count += 1
             if count > 5:
                 break
-            raw_input['document_html'] = '' # this field is very big
-            input_data.append(raw_input)
+            
 
-
-    # def is_whitespace(c):
-    #     if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
-    #         return True
-    #     return False
-
-    examples = []
-    for entry in input_data:
-        # only long answer
-
-            # def __init__(self,
-            #      question_tokens,
-            #      doc_tokens,
-            #      orig_answer_text=None,
-            #      start_token=None,
-            #      end_token=None,):
-        question_tokens = entry['question_tokens']
-        doc_tokens = entry['document_tokens']
-        start_token = entry['annotations'][0]['long_answer']['start_token']
-        end_token = entry['annotations'][0]['long_answer']['end_token']
-        # bytes and html are messy and will be avoid for now
-        #start_byte = entry['annotations'][0]['long_answer']['start_byte']
-        #end_byte = entry['annotations'][0]['long_answer']['end_byte']
-        orig_answer_text = ''
-        for id in range(start_token, end_token+1):
-            orig_answer_text += entry['document_tokens'][id]['token']
-            orig_answer_text += ' '
-
-        example = NQExample(question_tokens=question_tokens,
-                            doc_tokens=doc_tokens,
-                            orig_answer_text=orig_answer_text,
-                            start_token=start_token,
-                            end_token=end_token)
-        examples.append(example)
     return examples
 
 
 def convert_examples_to_features(examples, tokenizer, max_seq_length,
                                  doc_stride, max_query_length, is_training):
-    """Loads a data file into a list of `InputBatch`s."""
+    """Loads a data file into a list of `InputBatch`s.
+    The main difference between NQ and SQUAD is that
+    NQ is tokenized, so the process to tokenize (using bytes) is not necessary
+    though bytes are also provided
+    """
 
     unique_id = 1000000000
 
     features = []
     for (example_index, example) in enumerate(examples):
         query_tokens = example.question_tokens
-        # question token are normal tokens
-        # doc tokens are:
-        # form {'end_byte': 95, 'html_token': False, 'start_byte': 92, 'token': 'The'}
 
         if len(query_tokens) > max_query_length:
             query_tokens = query_tokens[0:max_query_length]
@@ -190,25 +211,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         all_doc_tokens = []
         for (i, token) in enumerate(example.doc_tokens):
             orig_to_tok_index.append(len(all_doc_tokens))
-            sub_tokens = tokenizer.tokenize(token['token']) # see the form above
-            for sub_token in sub_tokens:
-                tok_to_orig_index.append(i)
-                all_doc_tokens.append(sub_token)
+            # do not use sub_tokens, to simplify the preprocessing
 
-        tok_start_position = None
-        tok_end_position = None
-        if is_training:
-            tok_start_position = orig_to_tok_index[example.start_token]
-            if example.end_token < len(example.doc_tokens) - 1:
-                tok_end_position = orig_to_tok_index[example.end_token + 1] - 1
-            else:
-                tok_end_position = len(all_doc_tokens) - 1
-            
-            # to be examined later:
-
-            # (tok_start_position, tok_end_position) = _improve_answer_span(
-            #     all_doc_tokens, tok_start_position, tok_end_position, tokenizer,
-            #     example.orig_answer_text)
+            tok_to_orig_index.append(i)
+            all_doc_tokens.append(token)
 
         # The -3 accounts for [CLS], [SEP] and [SEP]
         max_tokens_for_doc = max_seq_length - len(query_tokens) - 3
@@ -225,7 +231,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             if length > max_tokens_for_doc:
                 length = max_tokens_for_doc
             doc_spans.append(_DocSpan(start=start_offset, length=length))
-            if start_offset + length == len(all_doc_tokens):
+            if start_offset + length == len(all_doc_tokens): # should it be loosen to >= ?
                 break
             start_offset += min(length, doc_stride)
 
@@ -270,24 +276,29 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             assert len(input_mask) == max_seq_length
             assert len(segment_ids) == max_seq_length
 
-            start_position = None
-            end_position = None
+            start_token = None
+            end_token = None
             if is_training:
                 # For training, if our document chunk does not contain an annotation
                 # we throw it out, since there is nothing to predict.
+
+                # The above is for SQUAD
+                # for NQ, downsample by 50 times
+                # for now , throw them out; check the paper for details
+                # what is the right inclusion/ exclusion setting in SQUAD?
                 doc_start = doc_span.start
                 doc_end = doc_span.start + doc_span.length - 1
                 out_of_span = False
-                if not (tok_start_position >= doc_start and
-                        tok_end_position <= doc_end):
+                if not (example.start_token >= doc_start and
+                        example.end_token <= doc_end):
                     out_of_span = True
                 if out_of_span:
-                    start_position = 0
-                    end_position = 0
+                    start_token = 0
+                    end_token = 0
                 else:
                     doc_offset = len(query_tokens) + 2
-                    start_position = tok_start_position - doc_start + doc_offset
-                    end_position = tok_end_position - doc_start + doc_offset
+                    start_token = example.start_token - doc_start + doc_offset
+                    end_token = example.end_token - doc_start + doc_offset
             if example_index < 20:
                 logger.info("*** Example ***")
                 logger.info("unique_id: %s" % (unique_id))
@@ -305,9 +316,9 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 logger.info(
                     "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
                 if is_training:
-                    answer_text = " ".join(tokens[start_position:(end_position + 1)])
-                    logger.info("start_position: %d" % (start_position))
-                    logger.info("end_position: %d" % (end_position))
+                    answer_text = " ".join(tokens[start_token:(end_token + 1)])
+                    logger.info("start_token: %d" % (start_token))
+                    logger.info("end_token: %d" % (end_token))
                     logger.info(
                         "answer: %s" % (answer_text))
 
@@ -322,50 +333,12 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     input_ids=input_ids,
                     input_mask=input_mask,
                     segment_ids=segment_ids,
-                    start_position=start_position,
-                    end_position=end_position,
+                    start_token=start_token,
+                    end_token=end_token,
                     ))
             unique_id += 1
 
     return features
-
-
-# def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer,
-#                          orig_answer_text):
-#     """Returns tokenized answer spans that better match the annotated answer."""
-
-#     # The SQuAD annotations are character based. We first project them to
-#     # whitespace-tokenized words. But then after WordPiece tokenization, we can
-#     # often find a "better match". For example:
-#     #
-#     #   Question: What year was John Smith born?
-#     #   Context: The leader was John Smith (1895-1943).
-#     #   Answer: 1895
-#     #
-#     # The original whitespace-tokenized answer will be "(1895-1943).". However
-#     # after tokenization, our tokens will be "( 1895 - 1943 ) .". So we can match
-#     # the exact answer, 1895.
-#     #
-#     # However, this is not always possible. Consider the following:
-#     #
-#     #   Question: What country is the top exporter of electornics?
-#     #   Context: The Japanese electronics industry is the lagest in the world.
-#     #   Answer: Japan
-#     #
-#     # In this case, the annotator chose "Japan" as a character sub-span of
-#     # the word "Japanese". Since our WordPiece tokenizer does not split
-#     # "Japanese", we just use "Japanese" as the annotation. This is fairly rare
-#     # in SQuAD, but does happen.
-#     tok_answer_text = " ".join(tokenizer.tokenize(orig_answer_text))
-
-#     for new_start in range(input_start, input_end + 1):
-#         for new_end in range(input_end, new_start - 1, -1):
-#             text_span = " ".join(doc_tokens[new_start:(new_end + 1)])
-#             if text_span == tok_answer_text:
-#                 return (new_start, new_end)
-
-#     return (input_start, input_end)
-
 
 def _check_is_max_context(doc_spans, cur_span_index, position):
     """Check if this is the 'max context' doc span for the token."""
@@ -710,7 +683,8 @@ def main():
     parser.add_argument("--train_file", default=None, type=str, help="SQuAD json for training. E.g., train-v1.1.json")
     parser.add_argument("--predict_file", default=None, type=str,
                         help="SQuAD json for predictions. E.g., dev-v1.1.json or test-v1.1.json")
-    parser.add_argument("--max_seq_length", default=384, type=int,
+    # SQUAD use 384, NQ uses 512
+    parser.add_argument("--max_seq_length", default=512, type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
                              "longer than this will be truncated, and sequences shorter than this will be padded.")
     parser.add_argument("--doc_stride", default=128, type=int,
@@ -810,6 +784,7 @@ def main():
         os.makedirs(args.output_dir)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
+    #import pdb; pdb.set_trace();
     train_examples = None
     num_train_optimization_steps = None
     if args.do_train:
