@@ -96,8 +96,8 @@ class NQExample(object):
         s += ", doc_tokens: [%s]" % (" ".join(self.doc_tokens))
         if self.start_token:
             s += ", start_token: %d" % (self.start_token)
-        if self.start_token:# should this be end token ?
-            s += ", token: %d" % (self.end_token)
+        if self.end_token:# should this be end token ?
+            s += ", end_token: %d" % (self.end_token)
         return s
 
 
@@ -127,7 +127,7 @@ class InputFeatures(object):
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.start_token = start_token
-        self.start_token = start_token
+        self.end_token = end_token
 
 
 def read_NQ_examples(input_file, is_training):
@@ -157,9 +157,9 @@ def read_NQ_examples(input_file, is_training):
                 question_type = 1 # long answer
             if len(short_answers) > 0:
                 question_type = 0 # short answer
-            if len(item['annotation'][0]['yes_no_answer']) == 3:
+            if len(item['annotations'][0]['yes_no_answer']) == 3:
                 question_type = 2 # yes
-            if len(item['annotation'][0]['yes_no_answer']) == 2:
+            if len(item['annotations'][0]['yes_no_answer']) == 2:
                 question_type = 3 # no
             
             # split short answers and build examples
@@ -321,22 +321,23 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     logger.info("end_token: %d" % (end_token))
                     logger.info(
                         "answer: %s" % (answer_text))
-
-            features.append(
-                InputFeatures(
-                    unique_id=unique_id,
-                    example_index=example_index,
-                    doc_span_index=doc_span_index,
-                    tokens=tokens,
-                    token_to_orig_map=token_to_orig_map,
-                    token_is_max_context=token_is_max_context,
-                    input_ids=input_ids,
-                    input_mask=input_mask,
-                    segment_ids=segment_ids,
-                    start_token=start_token,
-                    end_token=end_token,
-                    ))
-            unique_id += 1
+                    
+            if not out_of_span: # add probability here
+                features.append(
+                    InputFeatures(
+                        unique_id=unique_id,
+                        example_index=example_index,
+                        doc_span_index=doc_span_index,
+                        tokens=tokens,
+                        token_to_orig_map=token_to_orig_map,
+                        token_is_max_context=token_is_max_context,
+                        input_ids=input_ids,
+                        input_mask=input_mask,
+                        segment_ids=segment_ids,
+                        start_token=start_token,
+                        end_token=end_token,
+                        ))
+                unique_id += 1
 
     return features
 
@@ -788,7 +789,7 @@ def main():
     train_examples = None
     num_train_optimization_steps = None
     if args.do_train:
-        train_examples = read_squad_examples(
+        train_examples = read_NQ_examples(
             input_file=args.train_file, is_training=True)
         num_train_optimization_steps = int(
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
@@ -874,10 +875,11 @@ def main():
         all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
-        all_start_positions = torch.tensor([f.start_position for f in train_features], dtype=torch.long)
-        all_end_positions = torch.tensor([f.end_position for f in train_features], dtype=torch.long)
+        all_start_tokens = torch.tensor([f.start_token for f in train_features], dtype=torch.long)
+        #import pdb; pdb.set_trace()
+        all_end_tokens = torch.tensor([f.end_token for f in train_features], dtype=torch.long)
         train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                   all_start_positions, all_end_positions)
+                                   all_start_tokens, all_end_tokens)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -930,7 +932,7 @@ def main():
     model.to(device)
 
     if args.do_predict and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        eval_examples = read_squad_examples(
+        eval_examples = read_NQ_examples(
             input_file=args.predict_file, is_training=False)
         eval_features = convert_examples_to_features(
             examples=eval_examples,
