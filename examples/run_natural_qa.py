@@ -70,6 +70,8 @@ class NQExample(object):
     (c,s,e,t)
     t is question type
     0 = short; 1 = long; 2 = yes; 3 = no; 4 = no-answer
+
+    in the run_SQUAD.py, the word 'token' sometime times refers to the annotated answer
     """
 
     def __init__(self,
@@ -130,9 +132,53 @@ class InputFeatures(object):
         self.end_token = end_token
 
 
+
 def read_NQ_examples(input_file, is_training):
     """Read a NQ json line file into a list of NQExamples
 ."""
+
+    def add_special_markup_tokens(example):
+        """ add '[Paragraph=N]', '[Table=N]', and '[List=N]' at the beginning of the N-th paragraph, list and
+        table respectively inthe document. For details, refer to the paper.
+        Returns the doc tokens 
+        """
+        
+        p_id = 0
+        t_id = 0
+        l_id = 0
+
+        html_table_list = ['<Table>', '<table>']
+        html_paragraph_list = ['<P>', '<p>']
+        html_list_list = ['<Ul>', '<Ol>', '<ul>', '<ol>']
+        orig_doc_tokens = example['document_tokens']
+
+        # construct new doc_token
+        doc_tokens = []
+        for orig_doc_token in orig_doc_tokens:
+            token = orig_doc_token['token']
+            if token in html_table_list:
+                doc_tokens.append('[Table={}]'.format(t_id))
+                t_id += 1
+            elif token in html_paragraph_list:
+                doc_tokens.append('[Paragraph={}]'.format(p_id))
+                p_id += 1
+            elif token in html_list_list:
+                doc_tokens.append('[List={}]'.format(l_id))
+                l_id += 1
+            doc_tokens.append(token)
+        
+        return doc_tokens
+    
+    def get_offset(tokens, index):
+        """
+        Get offset of answer spans, after special markup tokens are added
+        """
+        offset = 0
+        for token in tokens[0:index]:
+            if '[Paragraph=' in token or '[Table=' in token or '[List=' in token:
+                offset += 1
+        return offset
+
     with open(input_file, "r", encoding='utf-8') as f:
         examples = []
         count = 0
@@ -140,14 +186,12 @@ def read_NQ_examples(input_file, is_training):
 
             # load relevant fields
             question_tokens = item['question_tokens']
-            orig_doc_tokens = item['document_tokens']
             # question token are normal tokens
             # doc tokens are:
             # form {'end_byte': 95, 'html_token': False, 'start_byte': 92, 'token': 'The'}
             # simplify doc_tokens
-            doc_tokens = []
-            for i in orig_doc_tokens:
-                doc_tokens.append(i['token'])
+            doc_tokens = add_special_markup_tokens(item)
+            old_doc_tokens = item['document_tokens']
 
             short_answers = item['annotations'][0]['short_answers']
             
@@ -167,10 +211,16 @@ def read_NQ_examples(input_file, is_training):
                 for short_answer in short_answers:
                     start_token = short_answer['start_token']
                     end_token = short_answer['end_token']
+                    print(start_token, end_token, 'start, end old')
+                    for i in old_doc_tokens[start_token: end_token]:
+                        print(i, ' old answer')
+                    start_token += get_offset(doc_tokens, start_token)
+                    end_token += get_offset(doc_tokens, end_token)
+                    print(start_token, end_token, 'start end new')
                     orig_answer_text = ''
                     for i in range(start_token, end_token):
-                        orig_answer_text += item['document_tokens'][i]['token']
-                        orig_answer_text += ' ' # Not correct if there is no space, e.g. 'Hi!'
+                        orig_answer_text += doc_tokens[i]
+                        orig_answer_text += ' ' # Not correct if there is no space, e.g. 'Hi!', for debugging only
                         example = NQExample(question_tokens=question_tokens,
                                 doc_tokens=doc_tokens,
                                 orig_answer_text=orig_answer_text,
@@ -178,13 +228,19 @@ def read_NQ_examples(input_file, is_training):
                                 end_token=end_token,
                                 question_type=question_type)
                         examples.append(example)
+                    print(orig_answer_text, 'new answer')
+                    print(doc_tokens, '  doc tokens')
+
 
                 # if there is not short answers, skip
 
             count += 1
-            if count > 5:
+            if len(examples) > 1:
                 break
+            if count % 500 == 0:
+                print('number of examples loaded: {}'.format(count))
             
+        print('Total number of examples loaded: {}'.format(len(examples)))
 
     return examples
 
@@ -211,10 +267,17 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         all_doc_tokens = []
         for (i, token) in enumerate(example.doc_tokens):
             orig_to_tok_index.append(len(all_doc_tokens))
-            # do not use sub_tokens, to simplify the preprocessing
-
-            tok_to_orig_index.append(i)
-            all_doc_tokens.append(token)
+            # subwords are compulsory
+            # not for html tags ?
+            html_tags = ['<Table>', '<P>', '</P>', '<Td>', '</Td>', '<Tr>', '</Tr>', '<Ul>', '</Ul>', '</Ol>', '<Ol>', '<Li>', '</Li>', '</Th>', '<Th>']
+            if token not in html_tags:
+                sub_tokens = tokenizer.tokenize(token)
+                for sub_token in sub_tokens:
+                    tok_to_orig_index.append(i)
+                    all_doc_tokens.append(sub_token)
+            else:
+                tok_to_orig_index.append(i)
+                all_doc_tokens.append(token)
 
         # The -3 accounts for [CLS], [SEP] and [SEP]
         max_tokens_for_doc = max_seq_length - len(query_tokens) - 3
@@ -299,30 +362,19 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     doc_offset = len(query_tokens) + 2
                     start_token = example.start_token - doc_start + doc_offset
                     end_token = example.end_token - doc_start + doc_offset
-            if example_index < 20:
-                logger.info("*** Example ***")
-                logger.info("unique_id: %s" % (unique_id))
-                logger.info("example_index: %s" % (example_index))
-                logger.info("doc_span_index: %s" % (doc_span_index))
-                logger.info("tokens: %s" % " ".join(tokens))
-                logger.info("token_to_orig_map: %s" % " ".join([
-                    "%d:%d" % (x, y) for (x, y) in token_to_orig_map.items()]))
-                logger.info("token_is_max_context: %s" % " ".join([
-                    "%d:%s" % (x, y) for (x, y) in token_is_max_context.items()
-                ]))
-                logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-                logger.info(
-                    "input_mask: %s" % " ".join([str(x) for x in input_mask]))
-                logger.info(
-                    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
-                if is_training:
-                    answer_text = " ".join(tokens[start_token:(end_token + 1)])
-                    logger.info("start_token: %d" % (start_token))
-                    logger.info("end_token: %d" % (end_token))
-                    logger.info(
-                        "answer: %s" % (answer_text))
+            # change the logging scheme to track preprocessing progress 
+            
+            # the baseline downsamples no-answer instances by 50 times
+
+            add_feature = False
+            if not out_of_span:
+                add_feature = True
+            else:
+                flag = random.randint(1,51)
+                if flag == 23: # or any number in (1, 51)
+                    add_feature = True
                     
-            if not out_of_span: # add probability here
+            if add_feature:
                 features.append(
                     InputFeatures(
                         unique_id=unique_id,
@@ -338,6 +390,27 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                         end_token=end_token,
                         ))
                 unique_id += 1
+                logger.info("*** Example ***")
+                logger.info("unique_id: %s" % (unique_id))
+                logger.info("example_index: %s" % (example_index))
+                logger.info("doc_span_index: %s" % (doc_span_index))
+                logger.info("tokens: %s" % " ".join(tokens))
+                #logger.info("token_to_orig_map: %s" % " ".join([
+                #    "%d:%d" % (x, y) for (x, y) in token_to_orig_map.items()]))
+                #logger.info("token_is_max_context: %s" % " ".join([
+                #    "%d:%s" % (x, y) for (x, y) in token_is_max_context.items()
+                #]))
+                #logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+                #logger.info(
+                #    "input_mask: %s" % " ".join([str(x) for x in input_mask]))
+                #logger.info(
+                #    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+                if is_training:
+                    answer_text = " ".join(tokens[start_token:end_token]) # SQUAD uses end + 1; NQ seems not
+                    logger.info("start_token: %d" % (start_token))
+                    logger.info("end_token: %d" % (end_token))
+                    logger.info(
+                        "answer: %s" % (answer_text))
 
     return features
 
