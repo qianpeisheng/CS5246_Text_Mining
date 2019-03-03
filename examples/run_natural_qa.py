@@ -173,9 +173,6 @@ def read_NQ_examples(input_file, is_training):
             if orig_doc_token['html_token']:
                 token = '[html_token]'
             doc_tokens.append(token)
-        #print('t_id ', t_id)
-        #print('p_id ', p_id)
-        #print('l_id', l_id)
         
         return doc_tokens
     
@@ -205,7 +202,6 @@ def read_NQ_examples(input_file, is_training):
                 l_id += 1
 
         offset = t_id + p_id + l_id
-        #print('offset ', offset)
         return offset
 
     with open(input_file, "r", encoding='utf-8') as f:
@@ -253,7 +249,6 @@ def read_NQ_examples(input_file, is_training):
                     for i in doc_tokens[start_token: end_token]:
                         i_str += i
                     print(i_str, 'with offset, answer')
-                    #print(doc_tokens[start_token- 10:end_token + 10])
                     print('............................................')
                     orig_answer_text = ''
                     for i in range(start_token, end_token):
@@ -275,13 +270,8 @@ def read_NQ_examples(input_file, is_training):
                 for i in old_doc_tokens[start_token: end_token]:
                     i_str += i['token']
                 print(i_str, ' orig answer')
-                # i_str = ''
-                # for i in old_doc_tokens[start_token: end_token]:
-                #     i_str += i['token']
-                # print(i_str, ' old answer')
                 start_token += get_offset(old_doc_tokens, start_token)
                 end_token += get_offset(old_doc_tokens, end_token)
-                #print(start_token, end_token, 'start end with offset')
                 i_str = ''
                 for i in doc_tokens[start_token: end_token]:
                         i_str += i
@@ -297,9 +287,6 @@ def read_NQ_examples(input_file, is_training):
                         end_token=end_token,
                         question_type=question_type)
                 examples.append(example)
-
-
-                # if there is not short answers, skip
 
             count += 1
             if len(examples) > 20:
