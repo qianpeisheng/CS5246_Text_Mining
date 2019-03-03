@@ -159,17 +159,23 @@ def read_NQ_examples(input_file, is_training):
             if token in html_table_list:
                 doc_tokens.append('[Table={}]'.format(t_id))
                 t_id += 1
+
             elif token in html_paragraph_list:
                 doc_tokens.append('[Paragraph={}]'.format(p_id))
                 p_id += 1
+
             elif token in html_list_list:
                 doc_tokens.append('[List={}]'.format(l_id))
                 l_id += 1
+
             
             # unify html tags, this needs to be discussed
             if orig_doc_token['html_token']:
                 token = '[html_token]'
             doc_tokens.append(token)
+        #print('t_id ', t_id)
+        #print('p_id ', p_id)
+        #print('l_id', l_id)
         
         return doc_tokens
     
@@ -177,10 +183,29 @@ def read_NQ_examples(input_file, is_training):
         """
         Get offset of answer spans, after special markup tokens are added
         """
-        offset = 0
+
+        p_id = 0
+        t_id = 0
+        l_id = 0
+
+        html_table_list = ['<Table>', '<table>']
+        html_paragraph_list = ['<P>', '<p>']
+        html_list_list = ['<Ul>', '<Ol>', '<ul>', '<ol>']
         for token in tokens[0:index]:
-            if '[Paragraph=' in token or '[Table=' in token or '[List=' in token:
-                offset += 1
+            if token['token'] in html_table_list:
+                doc_tokens.append('[Table={}]'.format(t_id))
+                t_id += 1
+
+            elif token['token'] in html_paragraph_list:
+                doc_tokens.append('[Paragraph={}]'.format(p_id))
+                p_id += 1
+
+            elif token['token'] in html_list_list:
+                doc_tokens.append('[List={}]'.format(l_id))
+                l_id += 1
+
+        offset = t_id + p_id + l_id
+        #print('offset ', offset)
         return offset
 
     with open(input_file, "r", encoding='utf-8') as f:
@@ -198,6 +223,7 @@ def read_NQ_examples(input_file, is_training):
             old_doc_tokens = item['document_tokens']
 
             short_answers = item['annotations'][0]['short_answers']
+            long_answer = item['annotations'][0]['long_answer']
             
             # decide question type
             question_type = 4 # assume it is a no-answer question
@@ -216,30 +242,67 @@ def read_NQ_examples(input_file, is_training):
                     start_token = short_answer['start_token']
                     end_token = short_answer['end_token']
                     print(start_token, end_token, 'start, end orig')
+                    i_str = ''
                     for i in old_doc_tokens[start_token: end_token]:
-                        print(i, ' old answer')
-                    start_token += get_offset(doc_tokens, start_token)
-                    end_token += get_offset(doc_tokens, end_token)
+                        i_str += i['token']
+                    print(i_str, ' orig answer')
+                    start_token += get_offset(old_doc_tokens, start_token)
+                    end_token += get_offset(old_doc_tokens, end_token)
                     print(start_token, end_token, 'start end with offset')
+                    i_str = ''
+                    for i in doc_tokens[start_token: end_token]:
+                        i_str += i
+                    print(i_str, 'with offset, answer')
+                    #print(doc_tokens[start_token- 10:end_token + 10])
+                    print('............................................')
                     orig_answer_text = ''
                     for i in range(start_token, end_token):
                         orig_answer_text += doc_tokens[i]
                         orig_answer_text += ' ' # Not correct if there is no space, e.g. 'Hi!', for debugging only
-                        example = NQExample(question_tokens=question_tokens,
-                                doc_tokens=doc_tokens,
-                                orig_answer_text=orig_answer_text,
-                                start_token=start_token,
-                                end_token=end_token,
-                                question_type=question_type)
-                        examples.append(example)
-                    print(orig_answer_text, 'new answer')
-                    print(doc_tokens[2800:3600], '  doc tokens')
+                    example = NQExample(question_tokens=question_tokens,
+                            doc_tokens=doc_tokens,
+                            orig_answer_text=orig_answer_text,
+                            start_token=start_token,
+                            end_token=end_token,
+                            question_type=question_type)
+                    examples.append(example)
+            elif long_answer['candidate_index'] != -1:
+                # build long answer examples
+                start_token = long_answer['start_token']
+                end_token = long_answer['end_token']
+                print(start_token, end_token, 'start, end orig')
+                i_str = ''
+                for i in old_doc_tokens[start_token: end_token]:
+                    i_str += i['token']
+                print(i_str, ' orig answer')
+                # i_str = ''
+                # for i in old_doc_tokens[start_token: end_token]:
+                #     i_str += i['token']
+                # print(i_str, ' old answer')
+                start_token += get_offset(old_doc_tokens, start_token)
+                end_token += get_offset(old_doc_tokens, end_token)
+                #print(start_token, end_token, 'start end with offset')
+                i_str = ''
+                for i in doc_tokens[start_token: end_token]:
+                        i_str += i
+                #print(i_str, 'with offset, answer')
+                orig_answer_text = ''
+                for i in range(start_token, end_token):
+                    orig_answer_text += doc_tokens[i]
+                    orig_answer_text += ' ' # Not correct if there is no space, e.g. 'Hi!', for debugging only
+                example = NQExample(question_tokens=question_tokens,
+                        doc_tokens=doc_tokens,
+                        orig_answer_text=orig_answer_text,
+                        start_token=start_token,
+                        end_token=end_token,
+                        question_type=question_type)
+                examples.append(example)
 
 
                 # if there is not short answers, skip
 
             count += 1
-            if len(examples) > 1:
+            if len(examples) > 20:
                 break
             if count % 500 == 0:
                 print('number of examples loaded: {}'.format(count))
@@ -398,30 +461,31 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                         end_token=end_token,
                         ))
                 unique_id += 1
-                logger.info("*** Example ***")
-                logger.info("unique_id: %s" % (unique_id))
-                logger.info("example_index: %s" % (example_index))
-                logger.info('doc start, doc end')
-                logger.info(doc_start)
-                logger.info(doc_end)
-                logger.info("doc_span_index: %s" % (doc_span_index))
-                logger.info("tokens: %s" % " ".join(tokens))
-                #logger.info("token_to_orig_map: %s" % " ".join([
-                #    "%d:%d" % (x, y) for (x, y) in token_to_orig_map.items()]))
-                #logger.info("token_is_max_context: %s" % " ".join([
-                #    "%d:%s" % (x, y) for (x, y) in token_is_max_context.items()
-                #]))
-                #logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-                #logger.info(
-                #    "input_mask: %s" % " ".join([str(x) for x in input_mask]))
-                #logger.info(
-                #    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
-                if is_training:
-                    answer_text = " ".join(tokens[start_token:end_token]) # SQUAD uses end + 1; NQ seems not
-                    logger.info("start_token: %d" % (start_token))
-                    logger.info("end_token: %d" % (end_token))
-                    logger.info(
-                        "answer: %s" % (answer_text))
+                if start_token != 0:
+                    logger.info("\n*** Example ***")
+                    logger.info("unique_id: %s" % (unique_id))
+                    logger.info("example_index: %s" % (example_index))
+                    logger.info('doc start, doc end')
+                    logger.info(doc_start)
+                    logger.info(doc_end)
+                    logger.info("doc_span_index: %s" % (doc_span_index))
+                    #logger.info("tokens: %s" % " ".join(tokens))
+                    #logger.info("token_to_orig_map: %s" % " ".join([
+                    #    "%d:%d" % (x, y) for (x, y) in token_to_orig_map.items()]))
+                    #logger.info("token_is_max_context: %s" % " ".join([
+                    #    "%d:%s" % (x, y) for (x, y) in token_is_max_context.items()
+                    #]))
+                    #logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+                    #logger.info(
+                    #    "input_mask: %s" % " ".join([str(x) for x in input_mask]))
+                    #logger.info(
+                    #    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+                    if is_training:
+                        answer_text = " ".join(tokens[start_token:end_token]) # SQUAD uses end + 1; NQ seems not
+                        logger.info("start_token: %d" % (start_token))
+                        logger.info("end_token: %d" % (end_token))
+                        logger.info(
+                            "answer: %s" % (answer_text))
 
     return features
 
