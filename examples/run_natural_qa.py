@@ -165,6 +165,10 @@ def read_NQ_examples(input_file, is_training):
             elif token in html_list_list:
                 doc_tokens.append('[List={}]'.format(l_id))
                 l_id += 1
+            
+            # unify html tags, this needs to be discussed
+            if orig_doc_token['html_token']:
+                token = '[html_token]'
             doc_tokens.append(token)
         
         return doc_tokens
@@ -211,12 +215,12 @@ def read_NQ_examples(input_file, is_training):
                 for short_answer in short_answers:
                     start_token = short_answer['start_token']
                     end_token = short_answer['end_token']
-                    print(start_token, end_token, 'start, end old')
+                    print(start_token, end_token, 'start, end orig')
                     for i in old_doc_tokens[start_token: end_token]:
                         print(i, ' old answer')
                     start_token += get_offset(doc_tokens, start_token)
                     end_token += get_offset(doc_tokens, end_token)
-                    print(start_token, end_token, 'start end new')
+                    print(start_token, end_token, 'start end with offset')
                     orig_answer_text = ''
                     for i in range(start_token, end_token):
                         orig_answer_text += doc_tokens[i]
@@ -229,7 +233,7 @@ def read_NQ_examples(input_file, is_training):
                                 question_type=question_type)
                         examples.append(example)
                     print(orig_answer_text, 'new answer')
-                    print(doc_tokens, '  doc tokens')
+                    print(doc_tokens[2800:3600], '  doc tokens')
 
 
                 # if there is not short answers, skip
@@ -269,15 +273,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             orig_to_tok_index.append(len(all_doc_tokens))
             # subwords are compulsory
             # not for html tags ?
-            html_tags = ['<Table>', '<P>', '</P>', '<Td>', '</Td>', '<Tr>', '</Tr>', '<Ul>', '</Ul>', '</Ol>', '<Ol>', '<Li>', '</Li>', '</Th>', '<Th>']
-            if token not in html_tags:
-                sub_tokens = tokenizer.tokenize(token)
-                for sub_token in sub_tokens:
-                    tok_to_orig_index.append(i)
-                    all_doc_tokens.append(sub_token)
-            else:
+            sub_tokens = tokenizer.tokenize(token)
+            for sub_token in sub_tokens:
                 tok_to_orig_index.append(i)
-                all_doc_tokens.append(token)
+                all_doc_tokens.append(sub_token)
 
         # The -3 accounts for [CLS], [SEP] and [SEP]
         max_tokens_for_doc = max_seq_length - len(query_tokens) - 3
@@ -352,16 +351,25 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 doc_start = doc_span.start
                 doc_end = doc_span.start + doc_span.length - 1
                 out_of_span = False
-                if not (example.start_token >= doc_start and
-                        example.end_token <= doc_end):
+
+                # beware that the new start token is the start of its sub token
+                # not the original token
+                sub_start_token = orig_to_tok_index[example.start_token]
+                sub_end_token = None
+                if example.end_token < len(orig_to_tok_index) - 1:
+                    sub_end_token = orig_to_tok_index[example.end_token + 1] - 1
+                else:
+                    sub_end_token = len(all_doc_tokens) - 1
+                if not (sub_start_token >= doc_start and
+                        sub_end_token <= doc_end):
                     out_of_span = True
                 if out_of_span:
                     start_token = 0
                     end_token = 0
                 else:
                     doc_offset = len(query_tokens) + 2
-                    start_token = example.start_token - doc_start + doc_offset
-                    end_token = example.end_token - doc_start + doc_offset
+                    start_token = sub_start_token - doc_start + doc_offset
+                    end_token = sub_end_token - doc_start + doc_offset
             # change the logging scheme to track preprocessing progress 
             
             # the baseline downsamples no-answer instances by 50 times
@@ -393,6 +401,9 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 logger.info("*** Example ***")
                 logger.info("unique_id: %s" % (unique_id))
                 logger.info("example_index: %s" % (example_index))
+                logger.info('doc start, doc end')
+                logger.info(doc_start)
+                logger.info(doc_end)
                 logger.info("doc_span_index: %s" % (doc_span_index))
                 logger.info("tokens: %s" % " ".join(tokens))
                 #logger.info("token_to_orig_map: %s" % " ".join([
