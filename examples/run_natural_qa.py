@@ -72,6 +72,8 @@ class NQExample(object):
     0 = short; 1 = long; 2 = yes; 3 = no; 4 = no-answer
 
     in the run_SQUAD.py, the word 'token' sometime times refers to the annotated answer
+    
+    for evaluation NQ need example id
     """
 
     def __init__(self,
@@ -80,13 +82,15 @@ class NQExample(object):
                  orig_answer_text=None,
                  start_token=None,
                  end_token=None,
-                 question_type = 0):
+                 question_type = 0,
+                 example_id = -1):
         self.question_tokens = question_tokens
         self.doc_tokens = doc_tokens
         self.orig_answer_text = orig_answer_text
         self.start_token = start_token
         self.end_token = end_token
         self.question_type = question_type
+        self.example_id = example_id
 
     def __str__(self):
         return self.__repr__()
@@ -220,6 +224,7 @@ def read_NQ_examples(input_file, is_training):
 
             short_answers = item['annotations'][0]['short_answers']
             long_answer = item['annotations'][0]['long_answer']
+            example_id = item['example_id']
             
             # decide question type
             question_type = 4 # assume it is a no-answer question
@@ -237,19 +242,19 @@ def read_NQ_examples(input_file, is_training):
                 for short_answer in short_answers:
                     start_token = short_answer['start_token']
                     end_token = short_answer['end_token']
-                    print(start_token, end_token, 'start, end orig')
-                    i_str = ''
-                    for i in old_doc_tokens[start_token: end_token]:
-                        i_str += i['token']
-                    print(i_str, ' orig answer')
+                    # print(start_token, end_token, 'start, end orig')
+                    # i_str = ''
+                    # for i in old_doc_tokens[start_token: end_token]:
+                    #     i_str += i['token']
+                    # print(i_str, ' orig answer')
                     start_token += get_offset(old_doc_tokens, start_token)
                     end_token += get_offset(old_doc_tokens, end_token)
-                    print(start_token, end_token, 'start end with offset')
-                    i_str = ''
-                    for i in doc_tokens[start_token: end_token]:
-                        i_str += i
-                    print(i_str, 'with offset, answer')
-                    print('............................................')
+                    # print(start_token, end_token, 'start end with offset')
+                    # i_str = ''
+                    # for i in doc_tokens[start_token: end_token]:
+                    #     i_str += i
+                    # print(i_str, 'with offset, answer')
+                    # print('............................................')
                     orig_answer_text = ''
                     for i in range(start_token, end_token):
                         orig_answer_text += doc_tokens[i]
@@ -259,22 +264,23 @@ def read_NQ_examples(input_file, is_training):
                             orig_answer_text=orig_answer_text,
                             start_token=start_token,
                             end_token=end_token,
-                            question_type=question_type)
+                            question_type=question_type,
+                            example_id=example_id)
                     examples.append(example)
             elif long_answer['candidate_index'] != -1:
                 # build long answer examples
                 start_token = long_answer['start_token']
                 end_token = long_answer['end_token']
-                print(start_token, end_token, 'start, end orig')
-                i_str = ''
-                for i in old_doc_tokens[start_token: end_token]:
-                    i_str += i['token']
-                print(i_str, ' orig answer')
+                # print(start_token, end_token, 'start, end orig')
+                # i_str = ''
+                # for i in old_doc_tokens[start_token: end_token]:
+                #     i_str += i['token']
+                # print(i_str, ' orig answer')
                 start_token += get_offset(old_doc_tokens, start_token)
                 end_token += get_offset(old_doc_tokens, end_token)
-                i_str = ''
-                for i in doc_tokens[start_token: end_token]:
-                        i_str += i
+                # i_str = ''
+                # for i in doc_tokens[start_token: end_token]:
+                #         i_str += i
                 #print(i_str, 'with offset, answer')
                 orig_answer_text = ''
                 for i in range(start_token, end_token):
@@ -289,8 +295,8 @@ def read_NQ_examples(input_file, is_training):
                 examples.append(example)
 
             count += 1
-            if len(examples) > 20:
-                break
+            # if len(examples) > 2:
+            #     break
             if count % 500 == 0:
                 print('number of examples loaded: {}'.format(count))
             
@@ -305,6 +311,8 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
     The main difference between NQ and SQUAD is that
     NQ is tokenized, so the process to tokenize (using bytes) is not necessary
     though bytes are also provided
+
+    When evaluating, no need to augment
     """
 
     unique_id = 1000000000
@@ -390,7 +398,14 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
             start_token = None
             end_token = None
-            if is_training:
+
+            # if not is_training: # is evaluating
+            #     out_of_span = False # the annotation must be within the text
+            #     doc_start = doc_span.start
+            #     doc_end = doc_span.start + doc_span.length -1
+
+
+            if is_training or True: # use this for evaluation for now
                 # For training, if our document chunk does not contain an annotation
                 # we throw it out, since there is nothing to predict.
 
@@ -427,10 +442,12 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             add_feature = False
             if not out_of_span:
                 add_feature = True
-            else:
+            elif is_training: # do not add during evaluation
                 flag = random.randint(1,51)
                 if flag == 23: # or any number in (1, 51)
                     add_feature = True
+            else: # eval
+                add_feature = True
                     
             if add_feature:
                 features.append(
@@ -448,7 +465,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                         end_token=end_token,
                         ))
                 unique_id += 1
-                if start_token != 0:
+                if start_token != 0: # log only those with answers
                     logger.info("\n*** Example ***")
                     logger.info("unique_id: %s" % (unique_id))
                     logger.info("example_index: %s" % (example_index))
@@ -540,6 +557,8 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
     all_predictions = collections.OrderedDict()
     all_nbest_json = collections.OrderedDict()
     scores_diff_json = collections.OrderedDict()
+    nq_json = {'predictions':[]}
+
 
     for (example_index, example) in enumerate(all_examples):
         features = example_index_to_features[example_index]
@@ -554,6 +573,8 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
             result = unique_id_to_result[feature.unique_id]
             start_indexes = _get_best_indexes(result.start_logits, n_best_size)
             end_indexes = _get_best_indexes(result.end_logits, n_best_size)
+            # logger.info(str(start_indexes[0]))
+            # logger.info(str(end_indexes[0]))
 
             for start_index in start_indexes:
                 for end_index in end_indexes:
@@ -589,11 +610,12 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
             reverse=True)
 
         _NbestPrediction = collections.namedtuple(  # pylint: disable=invalid-name
-            "NbestPrediction", ["text", "start_logit", "end_logit"])
+            "NbestPrediction", ["text",'start_index', 'end_index', "start_logit", "end_logit"])
 
         seen_predictions = {}
         nbest = []
         for pred in prelim_predictions:
+            # logger.info(pred)
             if len(nbest) >= n_best_size:
                 break
             feature = features[pred.feature_index]
@@ -625,20 +647,23 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
             nbest.append(
                 _NbestPrediction(
                     text=final_text,
+                    start_index=pred.start_index,
+                    end_index=pred.end_index,
                     start_logit=pred.start_logit,
                     end_logit=pred.end_logit))
+            # logger.info(nbest)
                 
             # In very rare edge cases we could only have single null prediction.
             # So we just create a nonce prediction in this case to avoid failure.
             if len(nbest)==1:
-                nbest.insert(0,
-                    _NbestPrediction(text="empty", start_logit=0.0, end_logit=0.0))
+                nbest.insert(1, # change 0 to 1, i.e. append instead of prepend, otherwise empty will be saved
+                    _NbestPrediction(text="empty", start_index = 0, end_index = 0, start_logit=0.0, end_logit=0.0))
                 
         # In very rare edge cases we could have no valid predictions. So we
         # just create a nonce prediction in this case to avoid failure.
         if not nbest:
             nbest.append(
-                _NbestPrediction(text="empty", start_logit=0.0, end_logit=0.0))
+                _NbestPrediction(text="empty", start_index = 0, end_index = 0, start_logit=0.0, end_logit=0.0))
 
         assert len(nbest) >= 1
 
@@ -655,20 +680,63 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
         nbest_json = []
         for (i, entry) in enumerate(nbest):
             output = collections.OrderedDict()
+            #output['example_id'] = example.example_id
             output["text"] = entry.text
             output["probability"] = probs[i]
+            output['start_index'] = entry.start_index
+            output['end_index'] = entry.end_index
             output["start_logit"] = entry.start_logit
             output["end_logit"] = entry.end_logit
             nbest_json.append(output)
+        
+        for (i, entry) in enumerate(nbest):
+            # for NQ, need only nbest 0
+            nq_output = collections.OrderedDict()
+            nq_output['example_id'] = example.example_id
+            #nq_output['long_answer'] = {'start_byte:':0, 'end_byte'}
+            nq_output['short_answers'] = []
+            nq_output["short_answers_score"] = probs[i]
+            # we do not use byte, thus set to -1, see the test code comment
+            start_index = entry.start_index
+            end_index = entry.end_index
+            if start_index == end_index:
+                start_index -= 1
+                end_index += 1
+            # TODO the evaluation script does not allow start = end?
+            nq_output['short_answers'].append({'start_byte':-1,
+                                            'end_byte':-1,
+                                            'start_token':start_index,
+                                            'end_token':end_index})
+            # currently do not use long answer
+            # but can be added
+            nq_output['long_answer'] = {'start_byte':-1,
+                                        'end_byte':-1,
+                                        'start_token':-1,
+                                        'end_token':-1}
+            nq_output["long_answer_score"] = 1 # add this field to avoid error
+                        
+            nq_output['yes_no_score'] = 'NONE'
+            if nq_output['example_id'] != -1:
+                nq_json['predictions'].append(nq_output)
+            
+            break # take only the best answer
+        # TODO why some has id -1?
+        # for od in nbest_json:
+        #     # logger.info(str(od['probability']))
+        #     logger.info(od['text'])
+        #     logger.info(od['probability'])
 
         assert len(nbest_json) >= 1
 
-
-        all_predictions[example.qas_id] = nbest_json[0]["text"]
+        # replace qas_id in SQUAD with example index
+        all_predictions[example_index] = nbest_json[0]["text"]
+        #all_predictions[example_index] = nq_json[0]
 
 
     with open(output_prediction_file, "w") as writer:
-        writer.write(json.dumps(all_predictions, indent=4) + "\n")
+        # writer.write(json.dumps(all_predictions, indent=4) + "\n")
+        writer.write(json.dumps(nq_json, indent=4) + "\n")
+        # TODO html tokens and some helper tokens are not removed
 
     with open(output_nbest_file, "w") as writer:
         writer.write(json.dumps(all_nbest_json, indent=4) + "\n")
@@ -1102,6 +1170,8 @@ def main():
             segment_ids = segment_ids.to(device)
             with torch.no_grad():
                 batch_start_logits, batch_end_logits = model(input_ids, segment_ids, input_mask)
+                # logger.info(str(batch_start_logits))
+                # logger.info(str(batch_end_logits))
             for i, example_index in enumerate(example_indices):
                 start_logits = batch_start_logits[i].detach().cpu().tolist()
                 end_logits = batch_end_logits[i].detach().cpu().tolist()
